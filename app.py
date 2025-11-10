@@ -57,14 +57,21 @@ def call_gemini(sentence: str) -> str:
     prompt = SYSTEM_PROMPT + "\n\n対象の文：\n" + sentence
 
     response = model.generate_content(
-        prompt,
-        request_options={"timeout": 30},
-    )
-    try:
-        text = response.text
-    except Exception:
-        text = str(response)
-    return text.strip()
+    prompt,
+    request_options={"timeout": 40},
+)
+
+text = (response.text or "").strip()
+
+# 如果 Gemini 返回多余的说明文字或代码块，尝试提取 JSON 段
+if not text.startswith("["):
+    import re
+    match = re.search(r"(\[.*\])", text, re.DOTALL)
+    if match:
+        text = match.group(1).strip()
+
+return text
+
 
 def parse_chunks(raw_text: str):
     """把 Gemini 输出解析成 [(text, role), ...]"""
