@@ -1,19 +1,21 @@
-# app.py — Vercel 版本
-# 本地运行：export GEMINI_API_KEY="你的真实key" && python app.py
-# 部署到 Vercel 后，会自动从环境变量读取 API key
+# app.py — Vercel 版本 + 友好错误提示
 
 import os
 import json
 import google.generativeai as genai
-from flask import Flask, request, render_template_string, jsonify
+from flask import Flask, request, render_template_string
 
 # ========== 1. 配置 Gemini ==========
-API_KEY = os.environ.get("GEMINI_API_KEY")  # 从环境变量读取
-if not API_KEY:
-    raise ValueError("❌ 未找到 GEMINI_API_KEY 环境变量，请在 Vercel 上配置。")
 
-genai.configure(api_key=API_KEY)
-MODEL_NAME = "gemini-2.5-flash"
+API_KEY = os.environ.get("GEMINI_API_KEY")
+HAS_API_KEY = bool(API_KEY)
+
+if HAS_API_KEY:
+    genai.configure(api_key=API_KEY)
+    MODEL_NAME = "gemini-2.5-flash"
+else:
+    # 没配置 key 的情况下先占个位置，后面页面会提示
+    MODEL_NAME = None
 
 # 句子成分颜色
 ROLE_COLORS = {
@@ -33,12 +35,6 @@ SYSTEM_PROMPT = """
 それぞれの句に「文の成分ラベル」を付けてください。
 
 出力は必ず JSON のみ、説明文やコードブロックを一切付けずに返してください。
-JSON の形式は次の通りです：
-[
-  { "text": "私は", "role": "主题" },
-  { "text": "果物が", "role": "主语" },
-  { "text": "好きで、", "role": "谓语" }
-]
 
 使えるラベルは以下の8種類に限定してください：
 - 主题
@@ -52,9 +48,18 @@ JSON の形式は次の通りです：
 """
 
 def call_gemini(sentence: str) -> str:
+    """调用 Gemini，返回字符串（JSON 文本）"""
+    if not HAS_API_KEY:
+        # 理论上不会走到这里，因为路由里会先检查，但防一手
+        raise RuntimeError("GEMINI_API_KEY is not set.")
+
     model = genai.GenerativeModel(MODEL_NAME)
     prompt = SYSTEM_PROMPT + "\n\n対象の文：\n" + sentence
-    response = model.generate_content(prompt, request_options={"timeout": 30})
+
+    response = model.generate_content(
+        prompt,
+        request_options={"timeout": 30},
+    )
     try:
         text = response.text
     except Exception:
@@ -62,12 +67,17 @@ def call_gemini(sentence: str) -> str:
     return text.strip()
 
 def parse_chunks(raw_text: str):
+    """把 Gemini 输出解析成 [(text, role), ...]"""
     cleaned = raw_text.strip()
+
+    # 有时会包一层 ```json ... ```，这里剥掉
     if cleaned.startswith("```"):
         parts = cleaned.split("```")
         if len(parts) >= 3:
             cleaned = parts[1].strip()
+
     data = json.loads(cleaned)
+
     chunks = []
     for item in data:
         text = item.get("text", "")
@@ -80,6 +90,7 @@ def parse_chunks(raw_text: str):
     return chunks
 
 def build_chunks_html(chunks):
+    """生成句子彩色块 HTML"""
     pieces = []
     for text, role in chunks:
         color = ROLE_COLORS.get(role, ROLE_COLORS["其他"])
@@ -94,6 +105,7 @@ def build_chunks_html(chunks):
     return "".join(pieces)
 
 # ========== Flask 网页部分 ==========
+
 app = Flask(__name__)
 
 PAGE_TEMPLATE = """
@@ -121,6 +133,16 @@ body {
 h1 {
     font-size: 1.8rem;
     margin-bottom: 1rem;
+}
+.info {
+    font-size: 0.9rem;
+    color: #6b7280;
+    margin-bottom: 0.5rem;
+}
+.error {
+    font-size: 0.9rem;
+    color: #b91c1c;
+    margin-bottom: 0.75rem;
 }
 textarea {
     width: 100%;
@@ -162,15 +184,30 @@ button:hover { opacity: 0.9; }
 <div class="container">
   <h1>Gemini 日语句子成分分析</h1>
 
+  {% if not has_api_key %}
+    <div class="error">
+      サーバー側の設定エラー：GEMINI_API_KEY が設定されていません。<br>
+      （Vercel の Environment Variables に GEMINI_API_KEY を追加してください。）
+    </div>
+  {% else %}
+    <div class="info">
+      文を入力して「分析」を押すと、文の成分（主語・述語など）が色分けされて表示されます。
+    </div>
+  {% endif %}
+
   <form method="post">
     <textarea name="sentence" placeholder="ここに日本語の文を入力してください">{{ sentence }}</textarea><br>
-    <button type="submit">分析</button>
+    <button type="submit" {% if not has_api_key %}disabled{% endif %}>分析</button>
   </form>
 
-  {% if sentence %}
+  {% if error_msg %}
+    <div class="error">{{ error_msg }}</div>
+  {% endif %}
+
+  {% if sentence and not error_msg %}
     <div class="sentence-original">原句：{{ sentence }}</div>
     <div class="sentence">{{ chunks_html|safe }}</div>
-  {% else %}
+  {% elif not sentence %}
     <p class="no-result">上に文を入力して「分析」を押してください。</p>
   {% endif %}
 </div>
@@ -182,24 +219,27 @@ button:hover { opacity: 0.9; }
 def index():
     sentence = ""
     chunks_html = ""
-    error = ""
+    error_msg = ""
+
     if request.method == "POST":
         sentence = request.form.get("sentence", "").strip()
-        if sentence:
+        if sentence and HAS_API_KEY:
             try:
                 raw = call_gemini(sentence)
                 chunks = parse_chunks(raw)
                 chunks_html = build_chunks_html(chunks)
             except Exception as e:
-                error = f"Error: {e}"
+                error_msg = f"サーバー側エラー: {e}"
+
     return render_template_string(
         PAGE_TEMPLATE,
         sentence=sentence,
         chunks_html=chunks_html,
-        error=error,
+        error_msg=error_msg,
+        has_api_key=HAS_API_KEY,
     )
 
-# === 在 Vercel / 本地都能正常启动 ===
+# Vercel 会以 "app" 为入口；本地运行也支持
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
