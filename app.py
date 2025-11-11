@@ -103,7 +103,10 @@ def parse_chunks(raw_text: str):
     - 支持顶层是 { sentence, translation_zh, chunks } 的形式
     - 返回 (chunks, translation_zh)
     """
-    cleaned = raw_text.strip()
+    cleaned = (raw_text or "").strip()
+
+    if not cleaned:
+        raise ValueError("模型返回为空。")
 
     # 有时会包一层 ```json ... ```，这里剥掉
     if cleaned.startswith("```"):
@@ -111,7 +114,19 @@ def parse_chunks(raw_text: str):
         if len(parts) >= 3:
             cleaned = parts[1].strip()
 
-    data = json.loads(cleaned)
+    # 如果前面还有说明文字，尝试从中间抽出 { ... } 或 [ ... ]
+    stripped = cleaned.lstrip()
+    if not (stripped.startswith("{") or stripped.startswith("[")):
+        m = re.search(r"(\{.*\}|\[.*\])", cleaned, re.DOTALL)
+        if m:
+            cleaned = m.group(1).strip()
+
+    try:
+        data = json.loads(cleaned)
+    except Exception as e:
+        # 把前面一小段原始输出写进错误信息，方便排查
+        preview = cleaned[:80].replace("\n", " ")
+        raise ValueError(f"模型输出不是合法 JSON（前80字节）：{preview}") from e
 
     translation_zh = ""
     chunks_data = []
@@ -147,6 +162,7 @@ def parse_chunks(raw_text: str):
         })
 
     return chunks, translation_zh
+
 
 
 def build_chunks_html(chunks):
