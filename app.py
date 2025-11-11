@@ -386,6 +386,7 @@ def index():
     chunks_html = ""
     error_msg = ""
     debug_text = ""
+    translation_zh = ""
 
     if request.method == "POST":
         sentence = request.form.get("sentence", "").strip()
@@ -394,15 +395,14 @@ def index():
                 raw = call_gemini(sentence)
                 debug_text = raw or ""
                 try:
-                                    chunks, translation_zh = parse_chunks(raw)
-                chunks_html = build_chunks_html(chunks)
-
+                    chunks, translation_zh = parse_chunks(raw)
+                    chunks_html = build_chunks_html(chunks)
                 except Exception as e:
                     error_msg = f"JSON解析エラー: {e}"
             except Exception as e:
                 error_msg = f"Gemini 呼び出しエラー: {e}"
 
-        return render_template_string(
+    return render_template_string(
         PAGE_TEMPLATE,
         sentence=sentence,
         chunks_html=chunks_html,
@@ -412,9 +412,12 @@ def index():
         translation_zh=translation_zh,
     )
 
-    )
 
 # Vercel / 本地入口
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
