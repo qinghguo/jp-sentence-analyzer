@@ -26,8 +26,10 @@ ROLE_COLORS = {
     "状语": "#d9b3ff",
     "定语": "#c7b3ff",
     "补语": "#b3e6ff",
+    "从句": "#c7f5ff",
     "其他": "#eeeeee",
 }
+
 
 SYSTEM_PROMPT = """
 あなたは日本語の構文解析アシスタントです。
@@ -63,6 +65,10 @@ SYSTEM_PROMPT = """
 5. 助詞には必ず "note" フィールドで文中の機能を簡潔に説明すること。
 6. 従属節・小句がある場合は、"children" 配列で入れ子にして表す。
 7. 中国語翻訳は自然で簡潔に。
+8. 助詞（が・を・に・へ・で・と・は・も・から・まで・より など）は、必ず他の語と分けて1つの text として出力してください。
+
+ラベルとして「从句」も使ってよい。従属節・小句がある場合は、その部分に role: "从句" を付けること。
+
 """
 
 
@@ -78,15 +84,20 @@ def call_gemini(sentence: str) -> str:
         request_options={"timeout": 40},
     )
 
-    text = (response.text or "").strip()
-
-    # 如果模型乱说话，尝试从中间提取 JSON 段落
-    if not text.startswith("["):
-        match = re.search(r"(\[.*\])", text, re.DOTALL)
-        if match:
-            text = match.group(1).strip()
-
+        text = (response.text or "").strip()
     return text
+
+JP_ROLE_MAP = {
+    "主語": "主语",
+    "述語": "谓语",
+    "目的語": "宾语",
+    "連体修飾": "定语",
+    "連用修飾": "状语",
+    "補語": "补语",
+    "トピック": "主题",
+    "話題": "主题",
+    "その他": "其他",
+}
 
 def parse_chunks(raw_text: str):
     """
@@ -118,14 +129,19 @@ def parse_chunks(raw_text: str):
         chunks_data = []
 
     chunks = []
-    for item in chunks_data:
+        for item in chunks_data:
         text = item.get("text", "")
         role = item.get("role", "其他")
         note = item.get("note", "")
+
+        # 把日文标签映射成中文标签
+        role = JP_ROLE_MAP.get(role, role)
+
         if not text:
             continue
-        if role not in ROLE_COLORS and role != "助詞" and role != "从句":
+        if role not in ROLE_COLORS and role not in ("助詞", "从句"):
             role = "其他"
+
         chunks.append({
             "text": text,
             "role": role,
@@ -156,11 +172,11 @@ def build_chunks_html(chunks):
             display_text = f"（{text}）"
 
         # 助詞：不高亮，用特殊样式 + 悬浮说明
-        if role == "助詞":
+                if role == "助詞":
             safe_note = note or "助詞"
             pieces.append(f"""
             <div class="chunk">
-              <div class="label">{role}</div>
+              <div class="label">&nbsp;</div>
               <div class="word particle">
                 {display_text}
                 <span class="particle-note">{safe_note}</span>
@@ -168,6 +184,7 @@ def build_chunks_html(chunks):
             </div>
             """)
             continue
+
 
         # 其他成分：正常彩色圆角块
         color = ROLE_COLORS.get(role, ROLE_COLORS["其他"])
