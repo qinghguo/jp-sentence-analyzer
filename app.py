@@ -160,10 +160,14 @@ JP_ROLE_MAP = {
     "連体修飾": "定语",
     "連用修飾": "状语",
     "補語": "补语",
+    "主題": "主题",
     "トピック": "主题",
     "話題": "主题",
+    "状語": "状语",
+    "修飾語": "定语",
     "その他": "其他",
 }
+
 
 def parse_chunks(raw_text: str):
     """
@@ -214,6 +218,8 @@ def parse_chunks(raw_text: str):
         role = item.get("role", "其他")
         note = item.get("note", "")
 
+        role = (role or "").strip()  # 先去掉空格
+
         # 日文标签 → 中文标签
         role = JP_ROLE_MAP.get(role, role)
 
@@ -235,6 +241,7 @@ def parse_chunks(raw_text: str):
         })
 
     return chunks, translation_zh, sentence_with_brackets
+
 
 
 
@@ -290,6 +297,7 @@ def colorize_bracket_sentence(sentence_with_brackets: str) -> str:
     """
     给括号结构句子添加颜色：
     () 淡黄色，[] 粉色，{} 紫色，主干文字为红色。
+    括号本身 + 括号里的文字都一起高亮。
     """
     if not sentence_with_brackets:
         return ""
@@ -300,29 +308,70 @@ def colorize_bracket_sentence(sentence_with_brackets: str) -> str:
         "[": "#ffd6e7",  # 中括号：粉色
         "{": "#e6ccff",  # 大括号：淡紫色
     }
+
     stack = []
+    current_color = None  # 当前 span 的背景色（None 表示主句红色或普通）
+
+    def open_span(new_color):
+        nonlocal html, current_color
+        # 关闭旧 span
+        if current_color is not None:
+            html += "</span>"
+        # 打开新 span（如果有颜色）
+        if new_color:
+            html += f'<span style="background-color:{new_color};">'
+        current_color = new_color
+
+    def add_main_clause_char(ch):
+        """不在任何括号里的文字：主句，用红色字体"""
+        nonlocal html, current_color
+        # 确保没有背景色 span 开着
+        if current_color is not None:
+            html += "</span>"
+            current_color = None
+        html += f'<span style="color:#b91c1c;">{ch}</span>'
 
     for ch in sentence_with_brackets:
         if ch in "([{":
-            stack.append(ch)
-            color = color_map[ch]
-            html += f'<span style="background-color:{color};">{ch}</span>'
+            # 进入更深一层括号
+            stack.append(color_map[ch])
+            new_color = stack[-1]
+            if new_color != current_color:
+                open_span(new_color)
+            html += ch
         elif ch in ")]}":
             if stack:
-                start = stack.pop()
-                color = color_map.get(start, "#ffe5e5")  # 兜底颜色
-                html += f'<span style="background-color:{color};">{ch}</span>'
-            else:
+                # 括号内文字的颜色 = 当前栈顶颜色
+                new_color = stack[-1]
+                if new_color != current_color:
+                    open_span(new_color)
                 html += ch
+                # 弹出这一层括号
+                stack.pop()
+                # 恢复上一层颜色或主句
+                new_color = stack[-1] if stack else None
+                if new_color != current_color:
+                    open_span(new_color)
+            else:
+                # 理论上不会，但以防万一：按主句处理
+                add_main_clause_char(ch)
         else:
-            # 不在任何括号里 → 主干文字，显示为红色
-            if not stack:
-                html += f'<span style="color:#b91c1c;">{ch}</span>'
-            else:
-                # 括号内内容保持默认字体颜色
+            if stack:
+                # 在某种括号内部：背景色 = 栈顶颜色
+                new_color = stack[-1]
+                if new_color != current_color:
+                    open_span(new_color)
                 html += ch
+            else:
+                # 不在任何括号里：主句文字
+                add_main_clause_char(ch)
+
+    # 最后收尾
+    if current_color is not None:
+        html += "</span>"
 
     return html
+
 
 
 # ========== Flask 网页部分 ==========
@@ -510,14 +559,14 @@ button:hover { opacity: 0.9; }
   {% if error_msg %}
     <div class="error">{{ error_msg }}</div>
   {% endif %}
-
+  
   {% if sentence and not error_msg and chunks_html %}
-    <div class="sentence-original">原句：{{ sentence }}</div>
     {% if sentence_with_brackets %}
       <div class="sentence-brackets">
-    括号结构：<span style="font-family: 'Noto Sans JP', sans-serif;">{{ colored_brackets_html|safe }}</span>
+        括号结构：<span style="font-family: 'Noto Sans JP', sans-serif;">{{ colored_brackets_html|safe }}</span>
       </div>
     {% endif %}
+
 
     
     {% if translation_zh %}
