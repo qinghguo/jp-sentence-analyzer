@@ -26,7 +26,6 @@ ROLE_COLORS = {
     "状语": "#d9b3ff",
     "定语": "#c7b3ff",
     "补语": "#b3e6ff",
-    "从句": "#c7f5ff",
     "其他": "#eeeeee",
 }
 
@@ -154,7 +153,7 @@ def build_chunks_html(chunks):
     """
     生成句子彩色块 HTML：
     - 助詞：不高亮，显示 tooltip
-    - 从句：用括号括起来
+    - role == "从句"：只加括号，不显示成分标签，用中性颜色
     """
     pieces = []
     for item in chunks:
@@ -165,8 +164,9 @@ def build_chunks_html(chunks):
         if not text:
             continue
 
-        # 从句：在文本外面加日文括号
         display_text = text
+
+        # 从句：在文本外面加日文括号
         if role == "从句":
             display_text = f"（{text}）"
 
@@ -185,10 +185,17 @@ def build_chunks_html(chunks):
             continue
 
         # 其他成分：正常彩色圆角块
-        color = ROLE_COLORS.get(role, ROLE_COLORS["其他"])
+        # 从句不参与成分标注：标签留空、颜色用“其他”
+        if role == "从句":
+            label = "&nbsp;"
+            color = ROLE_COLORS["其他"]
+        else:
+            label = role
+            color = ROLE_COLORS.get(role, ROLE_COLORS["其他"])
+
         pieces.append(f"""
         <div class="chunk">
-          <div class="label">{role}</div>
+          <div class="label">{label}</div>
           <div class="word" style="background-color: {color};">
             {display_text}
           </div>
@@ -196,6 +203,7 @@ def build_chunks_html(chunks):
         """)
 
     return "".join(pieces)
+
 
 # ========== Flask 网页部分 ==========
 
