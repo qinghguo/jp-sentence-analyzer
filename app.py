@@ -1,7 +1,8 @@
-# app.py — Vercel 版本 + 友好错误提示
+# app.py — Vercel & 本地通用稳定版
 
 import os
 import json
+import re
 import google.generativeai as genai
 from flask import Flask, request, render_template_string
 
@@ -14,8 +15,7 @@ if HAS_API_KEY:
     genai.configure(api_key=API_KEY)
     MODEL_NAME = "gemini-2.5-flash"
 else:
-    # 没配置 key 的情况下先占个位置，后面页面会提示
-    MODEL_NAME = None
+    MODEL_NAME = None  # 占位，避免导入时报错
 
 # 句子成分颜色
 ROLE_COLORS = {
@@ -31,12 +31,16 @@ ROLE_COLORS = {
 
 SYSTEM_PROMPT = """
 あなたは日本語の構文解析アシスタントです。
-与えられた1つの日本語の文を、意味的・構文的にまとまりのよい「句」に分け、
-それぞれの句に「文の成分ラベル」を付けてください。
+与えられた文を意味的にまとまりのある句に分け、
+それぞれに文の成分ラベルを付けてください。
 
-出力は必ず JSON のみ、説明文やコードブロックを一切付けずに返してください。
+# 絶対に守るルール：
+1. 出力は JSON 配列だけにしてください。
+2. JSON の前後に説明文・コメント・コードブロック（```）などを一切付けないでください。
+3. もし不明な場合でも空配列 [] を返してください。
+4. JSON は必ず [ で始まり ] で終わる形式にしてください。
 
-使えるラベルは以下の8種類に限定してください：
+使用できるラベル：
 - 主题
 - 主语
 - 宾语
@@ -45,39 +49,42 @@ SYSTEM_PROMPT = """
 - 定语
 - 补语
 - 其他
+
+例：
+[
+  { "text": "私は", "role": "主题" },
+  { "text": "果物が", "role": "主语" },
+  { "text": "好きです", "role": "谓语" }
+]
 """
 
 def call_gemini(sentence: str) -> str:
-    """调用 Gemini，返回字符串（JSON 文本）"""
+    """调用 Gemini，返回字符串（应为 JSON 文本）"""
     if not HAS_API_KEY:
-        # 理论上不会走到这里，因为路由里会先检查，但防一手
-        raise RuntimeError("GEMINI_API_KEY is not set.")
+        raise RuntimeError("GEMINI_API_KEY is not set on server.")
 
     model = genai.GenerativeModel(MODEL_NAME)
     prompt = SYSTEM_PROMPT + "\n\n対象の文：\n" + sentence
-
     response = model.generate_content(
-    prompt,
-    request_options={"timeout": 40},
-)
+        prompt,
+        request_options={"timeout": 40},
+    )
 
-text = (response.text or "").strip()
+    text = (response.text or "").strip()
 
-# 如果 Gemini 返回多余的说明文字或代码块，尝试提取 JSON 段
-if not text.startswith("["):
-    import re
-    match = re.search(r"(\[.*\])", text, re.DOTALL)
-    if match:
-        text = match.group(1).strip()
+    # 如果模型乱说话，尝试从中间提取 JSON 段落
+    if not text.startswith("["):
+        match = re.search(r"(\[.*\])", text, re.DOTALL)
+        if match:
+            text = match.group(1).strip()
 
-return text
-
+    return text
 
 def parse_chunks(raw_text: str):
     """把 Gemini 输出解析成 [(text, role), ...]"""
     cleaned = raw_text.strip()
 
-    # 有时会包一层 ```json ... ```，这里剥掉
+    # 再保险一手：如果还包着 ```json ```，再剥一次
     if cleaned.startswith("```"):
         parts = cleaned.split("```")
         if len(parts) >= 3:
@@ -149,7 +156,7 @@ h1 {
 .error {
     font-size: 0.9rem;
     color: #b91c1c;
-    margin-bottom: 0.75rem;
+    margin: 0.5rem 0 0.75rem;
 }
 textarea {
     width: 100%;
@@ -170,6 +177,10 @@ button {
     background: #111827;
     color: white;
 }
+button[disabled] {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
 button:hover { opacity: 0.9; }
 .sentence-original { margin: 1rem 0; font-size: 1.05rem; }
 .sentence {
@@ -184,6 +195,19 @@ button:hover { opacity: 0.9; }
     box-shadow: 0 0 0 1px rgba(0,0,0,0.06);
 }
 .no-result { color: #9ca3af; font-size: 0.9rem; }
+.debug-box {
+    margin-top: 1rem;
+    padding: 0.75rem 1rem;
+    background: #f3f4f6;
+    border-radius: 0.75rem;
+    font-size: 0.8rem;
+    color: #4b5563;
+    white-space: pre-wrap;
+}
+.debug-title {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
 {% endraw %}
 </style>
 </head>
@@ -211,11 +235,18 @@ button:hover { opacity: 0.9; }
     <div class="error">{{ error_msg }}</div>
   {% endif %}
 
-  {% if sentence and not error_msg %}
+  {% if sentence and not error_msg and chunks_html %}
     <div class="sentence-original">原句：{{ sentence }}</div>
     <div class="sentence">{{ chunks_html|safe }}</div>
   {% elif not sentence %}
     <p class="no-result">上に文を入力して「分析」を押してください。</p>
+  {% endif %}
+
+  {% if debug_text %}
+    <div class="debug-box">
+      <div class="debug-title">Debug（模型原始输出）</div>
+      {{ debug_text }}
+    </div>
   {% endif %}
 </div>
 </body>
@@ -227,16 +258,21 @@ def index():
     sentence = ""
     chunks_html = ""
     error_msg = ""
+    debug_text = ""
 
     if request.method == "POST":
         sentence = request.form.get("sentence", "").strip()
         if sentence and HAS_API_KEY:
             try:
                 raw = call_gemini(sentence)
-                chunks = parse_chunks(raw)
-                chunks_html = build_chunks_html(chunks)
+                debug_text = raw or ""
+                try:
+                    chunks = parse_chunks(raw)
+                    chunks_html = build_chunks_html(chunks)
+                except Exception as e:
+                    error_msg = f"JSON解析エラー: {e}"
             except Exception as e:
-                error_msg = f"サーバー側エラー: {e}"
+                error_msg = f"Gemini 呼び出しエラー: {e}"
 
     return render_template_string(
         PAGE_TEMPLATE,
@@ -244,9 +280,10 @@ def index():
         chunks_html=chunks_html,
         error_msg=error_msg,
         has_api_key=HAS_API_KEY,
+        debug_text=debug_text,
     )
 
-# Vercel 会以 "app" 为入口；本地运行也支持
+# Vercel / 本地入口
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
