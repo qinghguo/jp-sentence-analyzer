@@ -217,13 +217,14 @@ def parse_chunks(raw_text: str):
         # 日文标签 → 中文标签
         role = JP_ROLE_MAP.get(role, role)
 
-        # 助詞 / 助词 统一成“助词”
+        # 助詞 / 助词 统一成 “助词”
         if role in ("助詞", "助词"):
             role = "助词"
 
         if not text:
             continue
-        # 助词不走 ROLE_COLORS 颜色体系
+
+        # 助词不走 ROLE_COLORS
         if role not in ROLE_COLORS and role != "助词":
             role = "其他"
 
@@ -238,11 +239,12 @@ def parse_chunks(raw_text: str):
 
 
 
+
 def build_chunks_html(chunks):
     """
     生成句子彩色块 HTML：
-    - 助詞：不高亮，显示 tooltip
-    - role == "从句"：只加括号，不显示成分标签，用中性颜色
+    - 助词：不高亮，虚线框 + 悬浮说明（中文）
+    - 其他成分：彩色圆角块
     """
     pieces = []
     for item in chunks:
@@ -255,11 +257,7 @@ def build_chunks_html(chunks):
 
         display_text = text
 
-        # 从句：在文本外面加日文括号
-        if role == "从句":
-            display_text = f"（{text}）"
-
-        # 助詞：不高亮，用特殊样式 + 悬浮说明
+        # 助词：不高亮，用特殊样式 + 悬浮说明
         if role == "助词":
             safe_note = note or "助词"
             pieces.append(f"""
@@ -273,15 +271,9 @@ def build_chunks_html(chunks):
             """)
             continue
 
-
         # 其他成分：正常彩色圆角块
-        # 从句不参与成分标注：标签留空、颜色用“其他”
-        if role == "从句":
-            label = "&nbsp;"
-            color = ROLE_COLORS["其他"]
-        else:
-            label = role
-            color = ROLE_COLORS.get(role, ROLE_COLORS["其他"])
+        color = ROLE_COLORS.get(role, ROLE_COLORS["其他"])
+        label = role
 
         pieces.append(f"""
         <div class="chunk">
@@ -296,16 +288,17 @@ def build_chunks_html(chunks):
 
 def colorize_bracket_sentence(sentence_with_brackets: str) -> str:
     """
-    给括号结构句子添加颜色：()黄色 []蓝色 {}紫色，主干红色。
+    给括号结构句子添加颜色：
+    () 淡黄色，[] 粉色，{} 紫色，主干文字为红色。
     """
     if not sentence_with_brackets:
         return ""
 
     html = ""
     color_map = {
-        "(": "#fff7cc",  # 黄色
-        "[": "#cce5ff",  # 蓝色
-        "{": "#e6ccff",  # 紫色
+        "(": "#fff7cc",  # 小括号：淡黄色
+        "[": "#ffd6e7",  # 中括号：粉色
+        "{": "#e6ccff",  # 大括号：淡紫色
     }
     stack = []
 
@@ -313,22 +306,24 @@ def colorize_bracket_sentence(sentence_with_brackets: str) -> str:
         if ch in "([{":
             stack.append(ch)
             color = color_map[ch]
-            html += f'<span style="background-color:{color}; padding:0 2px;">{ch}'
+            html += f'<span style="background-color:{color};">{ch}</span>'
         elif ch in ")]}":
             if stack:
                 start = stack.pop()
-                color = color_map.get(start, "#ffe5e5")  # fallback
-                html += f'{ch}</span>'
+                color = color_map.get(start, "#ffe5e5")  # 兜底颜色
+                html += f'<span style="background-color:{color};">{ch}</span>'
             else:
                 html += ch
         else:
-            # 如果没有括号嵌套，显示主句红色
+            # 不在任何括号里 → 主干文字，显示为红色
             if not stack:
                 html += f'<span style="color:#b91c1c;">{ch}</span>'
             else:
+                # 括号内内容保持默认字体颜色
                 html += ch
 
     return html
+
 
 # ========== Flask 网页部分 ==========
 
@@ -403,7 +398,7 @@ button:hover { opacity: 0.9; }
 .sentence-brackets span {
     line-height: 1.8;
     border-radius: 4px;
-    padding: 0 2px;
+    padding: 0;
 }
 .sentence {
     display: flex; flex-wrap: wrap; gap: 4px 10px;
