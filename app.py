@@ -30,7 +30,6 @@ ROLE_COLORS = {
     "其他": "#eeeeee",
 }
 
-
 SYSTEM_PROMPT = """
 あなたは日本語の構文解析アシスタントです。
 与えられた日本語の文を、意味や文法のまとまりごとに分解し、
@@ -68,9 +67,7 @@ SYSTEM_PROMPT = """
 8. 助詞（が・を・に・へ・で・と・は・も・から・まで・より など）は、必ず他の語と分けて1つの text として出力してください。
 
 ラベルとして「从句」も使ってよい。従属節・小句がある場合は、その部分に role: "从句" を付けること。
-
 """
-
 
 def call_gemini(sentence: str) -> str:
     """调用 Gemini，返回字符串（应为 JSON 文本）"""
@@ -84,9 +81,11 @@ def call_gemini(sentence: str) -> str:
         request_options={"timeout": 40},
     )
 
-        text = (response.text or "").strip()
+    text = (response.text or "").strip()
     return text
 
+
+# 日文标签 → 中文标签 映射表
 JP_ROLE_MAP = {
     "主語": "主语",
     "述語": "谓语",
@@ -129,7 +128,7 @@ def parse_chunks(raw_text: str):
         chunks_data = []
 
     chunks = []
-        for item in chunks_data:
+    for item in chunks_data:
         text = item.get("text", "")
         role = item.get("role", "其他")
         note = item.get("note", "")
@@ -172,7 +171,7 @@ def build_chunks_html(chunks):
             display_text = f"（{text}）"
 
         # 助詞：不高亮，用特殊样式 + 悬浮说明
-                if role == "助詞":
+        if role == "助詞":
             safe_note = note or "助詞"
             pieces.append(f"""
             <div class="chunk">
@@ -184,7 +183,6 @@ def build_chunks_html(chunks):
             </div>
             """)
             continue
-
 
         # 其他成分：正常彩色圆角块
         color = ROLE_COLORS.get(role, ROLE_COLORS["其他"])
@@ -390,8 +388,6 @@ button:hover { opacity: 0.9; }
     <p class="no-result">上に文を入力して「分析」を押してください。</p>
   {% endif %}
 
-
-
 </div>
 </body>
 </html>
@@ -431,10 +427,6 @@ def index():
 
 
 # Vercel / 本地入口
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
