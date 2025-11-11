@@ -214,14 +214,18 @@ def parse_chunks(raw_text: str):
         role = item.get("role", "其他")
         note = item.get("note", "")
 
-        # 日文标签 → 中文标签（你之前已经有的 JP_ROLE_MAP 映射）
+        # 日文标签 → 中文标签
         role = JP_ROLE_MAP.get(role, role)
+
+        # 助詞 / 助词 统一成“助词”
+        if role in ("助詞", "助词"):
+            role = "助词"
 
         if not text:
             continue
-        if role not in ROLE_COLORS and role not in ("助詞", "助词"):
+        # 助词不走 ROLE_COLORS 颜色体系
+        if role not in ROLE_COLORS and role != "助词":
             role = "其他"
-
 
         chunks.append({
             "text": text,
@@ -256,8 +260,8 @@ def build_chunks_html(chunks):
             display_text = f"（{text}）"
 
         # 助詞：不高亮，用特殊样式 + 悬浮说明
-        if role == "助詞":
-            safe_note = note or "助詞"
+        if role == "助词":
+            safe_note = note or "助词"
             pieces.append(f"""
             <div class="chunk">
               <div class="label">&nbsp;</div>
@@ -268,6 +272,7 @@ def build_chunks_html(chunks):
             </div>
             """)
             continue
+
 
         # 其他成分：正常彩色圆角块
         # 从句不参与成分标注：标签留空、颜色用“其他”
@@ -545,6 +550,7 @@ def index():
     error_msg = ""
     debug_text = ""
     translation_zh = ""
+    colored_brackets_html = ""
 
     if request.method == "POST":
         sentence = request.form.get("sentence", "").strip()
