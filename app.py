@@ -219,8 +219,9 @@ def parse_chunks(raw_text: str):
 
         if not text:
             continue
-        if role not in ROLE_COLORS and role != "助词":
+        if role not in ROLE_COLORS and role not in ("助詞", "助词"):
             role = "其他"
+
 
         chunks.append({
             "text": text,
@@ -288,6 +289,41 @@ def build_chunks_html(chunks):
 
     return "".join(pieces)
 
+def colorize_bracket_sentence(sentence_with_brackets: str) -> str:
+    """
+    给括号结构句子添加颜色：()黄色 []蓝色 {}紫色，主干红色。
+    """
+    if not sentence_with_brackets:
+        return ""
+
+    html = ""
+    color_map = {
+        "(": "#fff7cc",  # 黄色
+        "[": "#cce5ff",  # 蓝色
+        "{": "#e6ccff",  # 紫色
+    }
+    stack = []
+
+    for ch in sentence_with_brackets:
+        if ch in "([{":
+            stack.append(ch)
+            color = color_map[ch]
+            html += f'<span style="background-color:{color}; padding:0 2px;">{ch}'
+        elif ch in ")]}":
+            if stack:
+                start = stack.pop()
+                color = color_map.get(start, "#ffe5e5")  # fallback
+                html += f'{ch}</span>'
+            else:
+                html += ch
+        else:
+            # 如果没有括号嵌套，显示主句红色
+            if not stack:
+                html += f'<span style="color:#b91c1c;">{ch}</span>'
+            else:
+                html += ch
+
+    return html
 
 # ========== Flask 网页部分 ==========
 
@@ -358,6 +394,11 @@ button:hover { opacity: 0.9; }
     margin: 0.25rem 0 0.75rem;
     font-size: 0.95rem;
     color: #374151;
+}
+.sentence-brackets span {
+    line-height: 1.8;
+    border-radius: 4px;
+    padding: 0 2px;
 }
 .sentence {
     display: flex; flex-wrap: wrap; gap: 4px 10px;
@@ -473,8 +514,11 @@ button:hover { opacity: 0.9; }
   {% if sentence and not error_msg and chunks_html %}
     <div class="sentence-original">原句：{{ sentence }}</div>
     {% if sentence_with_brackets %}
-      <div class="sentence-brackets">括号结构：{{ sentence_with_brackets }}</div>
+      <div class="sentence-brackets">
+    括号结构：<span style="font-family: 'Noto Sans JP', sans-serif;">{{ colored_brackets_html|safe }}</span>
+      </div>
     {% endif %}
+
     
     {% if translation_zh %}
       <details class="translation-box">
@@ -511,6 +555,7 @@ def index():
                 try:
                     chunks, translation_zh, sentence_with_brackets = parse_chunks(raw)
                     chunks_html = build_chunks_html(chunks)
+                    colored_brackets_html = colorize_bracket_sentence(sentence_with_brackets)
                 except Exception as e:
                     error_msg = f"JSON解析エラー: {e}"
             except Exception as e:
@@ -525,6 +570,7 @@ def index():
         debug_text=debug_text,
         translation_zh=translation_zh,
         sentence_with_brackets=sentence_with_brackets,
+        colored_brackets_html=colored_brackets_html,
     )
 
 
