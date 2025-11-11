@@ -168,8 +168,8 @@ JP_ROLE_MAP = {
 def parse_chunks(raw_text: str):
     """
     解析 Gemini 输出：
-    - 支持顶层是 { sentence, translation_zh, chunks } 的形式
-    - 返回 (chunks, translation_zh)
+    - 顶层是 { sentence, sentence_with_brackets, translation_zh, chunks } 的形式
+    - 返回 (chunks, translation_zh, sentence_with_brackets)
     """
     cleaned = (raw_text or "").strip()
 
@@ -192,18 +192,17 @@ def parse_chunks(raw_text: str):
     try:
         data = json.loads(cleaned)
     except Exception as e:
-        # 把前面一小段原始输出写进错误信息，方便排查
         preview = cleaned[:80].replace("\n", " ")
         raise ValueError(f"模型输出不是合法 JSON（前80字节）：{preview}") from e
 
     translation_zh = ""
+    sentence_with_brackets = ""
     chunks_data = []
 
-    # 顶层是对象：{ sentence, translation_zh, chunks: [...] }
     if isinstance(data, dict):
         translation_zh = data.get("translation_zh", "") or ""
+        sentence_with_brackets = data.get("sentence_with_brackets", "") or ""
         chunks_data = data.get("chunks", []) or []
-    # 顶层直接就是列表（兼容老格式）
     elif isinstance(data, list):
         chunks_data = data
     else:
@@ -215,12 +214,12 @@ def parse_chunks(raw_text: str):
         role = item.get("role", "其他")
         note = item.get("note", "")
 
-        # 把日文标签映射成中文标签
+        # 日文标签 → 中文标签（你之前已经有的 JP_ROLE_MAP 映射）
         role = JP_ROLE_MAP.get(role, role)
 
         if not text:
             continue
-        if role not in ROLE_COLORS and role not in ("助詞", "从句"):
+        if role not in ROLE_COLORS and role != "助词":
             role = "其他"
 
         chunks.append({
@@ -229,7 +228,8 @@ def parse_chunks(raw_text: str):
             "note": note,
         })
 
-    return chunks, translation_zh
+    return chunks, translation_zh, sentence_with_brackets
+
 
 
 
@@ -354,6 +354,11 @@ button[disabled] {
 }
 button:hover { opacity: 0.9; }
 .sentence-original { margin: 1rem 0; font-size: 1.05rem; }
+.sentence-brackets {
+    margin: 0.25rem 0 0.75rem;
+    font-size: 0.95rem;
+    color: #374151;
+}
 .sentence {
     display: flex; flex-wrap: wrap; gap: 4px 10px;
     align-items: flex-end; margin-bottom: 8px;
@@ -467,7 +472,10 @@ button:hover { opacity: 0.9; }
 
   {% if sentence and not error_msg and chunks_html %}
     <div class="sentence-original">原句：{{ sentence }}</div>
-
+    {% if sentence_with_brackets %}
+      <div class="sentence-brackets">括号结构：{{ sentence_with_brackets }}</div>
+    {% endif %}
+    
     {% if translation_zh %}
       <details class="translation-box">
         <summary>中文翻译を表示</summary>
@@ -487,6 +495,7 @@ button:hover { opacity: 0.9; }
 
 @app.route("/", methods=["GET", "POST"])
 def index():
+    sentence_with_brackets = ""
     sentence = ""
     chunks_html = ""
     error_msg = ""
@@ -500,7 +509,7 @@ def index():
                 raw = call_gemini(sentence)
                 debug_text = raw or ""
                 try:
-                    chunks, translation_zh = parse_chunks(raw)
+                    chunks, translation_zh, sentence_with_brackets = parse_chunks(raw)
                     chunks_html = build_chunks_html(chunks)
                 except Exception as e:
                     error_msg = f"JSON解析エラー: {e}"
@@ -515,6 +524,7 @@ def index():
         has_api_key=HAS_API_KEY,
         debug_text=debug_text,
         translation_zh=translation_zh,
+        sentence_with_brackets=sentence_with_brackets,
     )
 
 
